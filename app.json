@@ -1,26 +1,40 @@
 {
   "expo": {
     "scheme": "soulmegle-mobile",
-    "name": "soulmegle-mobile",
+    "name": "SoulMegle",
     "slug": "soulmegle-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#111827"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourcompany.soulmegle",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs access to camera for video chat.",
+        "NSMicrophoneUsageDescription": "This app needs access to microphone for voice chat.",
+        "UIBackgroundModes": ["audio", "voip"]
+      }
     },
     "android": {
+      "package": "com.yourcompany.soulmegle",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#111827"
       },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
       "edgeToEdgeEnabled": true
     },
     "web": {
@@ -28,6 +42,11 @@
     },
     "plugins": [
       "expo-router"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
   }
 }
