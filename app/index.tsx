@@ -22,13 +22,6 @@ export default function Home() {
         />
         <Text style={styles.title}>SoulMegle</Text>
         <Text style={styles.subtitle}>Talk to Strangers</Text>
-        
-        <Pressable 
-          style={styles.button}
-          onPress={() => router.replace('/lobby')}
-        >
-          <Text style={styles.buttonText}>Get Started</Text>
-        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -60,16 +53,5 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#9CA3AF',
     marginBottom: 40,
-  },
-  button: {
-    backgroundColor: '#7C3AED',
-    paddingVertical: 15,
-    paddingHorizontal: 40,
-    borderRadius: 25,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
   },
 });

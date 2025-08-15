@@ -16,6 +16,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { io, Socket } from 'socket.io-client';
 
+// Conditional import for WebRTC
+let RTCPeerConnection: any, RTCView: any, MediaStream: any, mediaDevices: any, RTCIceCandidate: any, RTCSessionDescription: any;
+let webRTCAvailable = false;
+
+try {
+  const webrtc = require('react-native-webrtc');
+  RTCPeerConnection = webrtc.RTCPeerConnection;
+  RTCView = webrtc.RTCView;
+  MediaStream = webrtc.MediaStream;
+  mediaDevices = webrtc.mediaDevices;
+  RTCIceCandidate = webrtc.RTCIceCandidate;
+  RTCSessionDescription = webrtc.RTCSessionDescription;
+  webRTCAvailable = true;
+} catch (e) {
+  console.log('WebRTC not available - running in Expo Go mode');
+}
+
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface Message {
@@ -25,29 +42,35 @@ interface Message {
 
 export default function VideoChat() {
   const params = useLocalSearchParams();
-  const serverUrl = (params.serverUrl as string) || 'http://192.168.0.194:8000'; // Update with your server IP
+  const serverUrl = (params.serverUrl as string) || 'http://192.168.0.194:8000';
   
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [spinnerVisible, setSpinnerVisible] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
+  const [localStream, setLocalStream] = useState<any>(null);
+  const [remoteStream, setRemoteStream] = useState<any>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
+  const peerRef = useRef<any>(null);
   const typeRef = useRef<string>('');
   const remoteSocketRef = useRef<string>('');
   const messagesEndRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     initializeConnection();
-
-    return () => {
-      cleanup();
-    };
+    return () => cleanup();
   }, []);
 
   const cleanup = () => {
+    if (localStream && webRTCAvailable) {
+      localStream.getTracks().forEach((track: any) => track.stop());
+    }
+    if (peerRef.current) {
+      peerRef.current.close();
+    }
     if (socketRef.current) {
       socketRef.current.emit('leave');
       socketRef.current.disconnect();
@@ -78,7 +101,7 @@ export default function VideoChat() {
       setSpinnerVisible(false);
       Alert.alert(
         'Connection Error', 
-        'Unable to connect to server. Make sure the server is running and the URL is correct.',
+        'Unable to connect to server. Make sure the server is running.',
         [{ text: 'OK', onPress: () => router.replace('/lobby') }]
       );
     });
@@ -88,35 +111,158 @@ export default function VideoChat() {
       remoteSocketRef.current = id;
       setSpinnerVisible(false);
       
-      // Show a message that stranger connected
-      setMessages([{ text: 'Stranger connected!', sender: 'You' }]);
+      if (webRTCAvailable) {
+        setupPeerConnection();
+        startMediaStream();
+      } else {
+        setMessages([{ text: 'Stranger connected! (Video unavailable in Expo Go)', sender: 'You' }]);
+      }
     });
 
-    socketRef.current.on('disconnected', () => {
-      Alert.alert('Disconnected', 'The other user has left the chat', [
-        { text: 'OK', onPress: () => router.replace('/lobby') }
-      ]);
-    });
+    socketRef.current.on('sdp:reply', handleSDPReply);
+    socketRef.current.on('ice:reply', handleICECandidateReply);
+    socketRef.current.on('disconnected', handleRemoteDisconnect);
+    socketRef.current.on('chat:receive', handleChatReceive);
+    socketRef.current.on('skipped', handleSkipped);
+  };
 
-    socketRef.current.on('chat:receive', ({ message }: { message: string }) => {
-      setMessages(prev => [...prev, { text: message, sender: 'Stranger' }]);
-    });
+  const setupPeerConnection = () => {
+    if (!webRTCAvailable) return;
 
-    socketRef.current.on('skipped', () => {
-      cleanup();
-      setSpinnerVisible(true);
-      initializeConnection();
-    });
+    const configuration = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    };
+
+    peerRef.current = new RTCPeerConnection(configuration);
+
+    peerRef.current.onicecandidate = (event: any) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.emit('ice:send', { candidate: event.candidate });
+      }
+    };
+
+    peerRef.current.onaddstream = (event: any) => {
+      if (event.stream) {
+        setRemoteStream(event.stream);
+      }
+    };
+
+    peerRef.current.onnegotiationneeded = async () => {
+      if (typeRef.current === 'p1') {
+        try {
+          const offer = await peerRef.current!.createOffer();
+          await peerRef.current!.setLocalDescription(offer);
+          socketRef.current?.emit('sdp:send', {
+            sdp: peerRef.current!.localDescription,
+          });
+        } catch (error) {
+          console.error('Error during negotiation:', error);
+        }
+      }
+    };
+  };
+
+  const startMediaStream = async () => {
+    if (!webRTCAvailable) return;
+
+    try {
+      const stream = await mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          facingMode: 'user',
+          frameRate: 30,
+          width: 640,
+          height: 480,
+        },
+      });
+
+      setLocalStream(stream);
+
+      if (peerRef.current) {
+        stream.getTracks().forEach((track: any) => {
+          peerRef.current!.addTrack(track, stream);
+        });
+      }
+    } catch (error) {
+      console.error('Error accessing media devices:', error);
+      Alert.alert('Camera Error', 'Unable to access camera and microphone');
+    }
+  };
+
+  const handleSDPReply = async ({ sdp }: any) => {
+    if (!webRTCAvailable || !peerRef.current) return;
+
+    try {
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+      if (typeRef.current === 'p2') {
+        const answer = await peerRef.current.createAnswer();
+        await peerRef.current.setLocalDescription(answer);
+        socketRef.current?.emit('sdp:send', {
+          sdp: peerRef.current.localDescription,
+        });
+      }
+    } catch (error) {
+      console.error('Error handling SDP reply:', error);
+    }
+  };
+
+  const handleICECandidateReply = async ({ candidate }: any) => {
+    if (!webRTCAvailable || !peerRef.current) return;
+
+    try {
+      if (candidate) {
+        await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    } catch (error) {
+      console.error('Error adding ICE candidate:', error);
+    }
+  };
+
+  const handleChatReceive = ({ message }: { message: string }) => {
+    setMessages(prev => [...prev, { text: message, sender: 'Stranger' }]);
+  };
+
+  const handleRemoteDisconnect = () => {
+    Alert.alert('Disconnected', 'The other user has left the chat', [
+      { text: 'OK', onPress: () => router.replace('/lobby') }
+    ]);
+  };
+
+  const handleSkipped = () => {
+    cleanup();
+    setSpinnerVisible(true);
+    initializeConnection();
   };
 
   const toggleAudio = () => {
-    setIsAudioMuted(!isAudioMuted);
-    Alert.alert('Info', 'Audio toggle requires WebRTC. Create a development build to enable video/audio features.');
+    if (localStream && webRTCAvailable) {
+      localStream.getAudioTracks().forEach((track: any) => {
+        track.enabled = !track.enabled;
+        setIsAudioMuted(!track.enabled);
+      });
+    } else {
+      setIsAudioMuted(!isAudioMuted);
+      if (!webRTCAvailable) {
+        Alert.alert('Info', 'Audio requires a development build with WebRTC');
+      }
+    }
   };
 
   const toggleVideo = () => {
-    setIsVideoMuted(!isVideoMuted);
-    Alert.alert('Info', 'Video toggle requires WebRTC. Create a development build to enable video/audio features.');
+    if (localStream && webRTCAvailable) {
+      localStream.getVideoTracks().forEach((track: any) => {
+        track.enabled = !track.enabled;
+        setIsVideoMuted(!track.enabled);
+      });
+    } else {
+      setIsVideoMuted(!isVideoMuted);
+      if (!webRTCAvailable) {
+        Alert.alert('Info', 'Video requires a development build with WebRTC');
+      }
+    }
   };
 
   const skipRoom = () => {
@@ -173,19 +319,42 @@ export default function VideoChat() {
       </View>
 
       <View style={styles.content}>
-        {/* Video placeholder area */}
         <View style={styles.videosContainer}>
-          <View style={styles.videoPlaceholder}>
-            <Text style={styles.placeholderText}>Stranger's Video</Text>
-            <Text style={styles.placeholderSubtext}>Video requires development build</Text>
-          </View>
+          {webRTCAvailable && remoteStream ? (
+            <View style={styles.remoteVideoContainer}>
+              <RTCView
+                streamURL={remoteStream.toURL()}
+                style={styles.remoteVideo}
+                objectFit="cover"
+              />
+              <Text style={styles.videoLabel}>Stranger</Text>
+            </View>
+          ) : (
+            <View style={styles.videoPlaceholder}>
+              <Text style={styles.placeholderText}>Stranger's Video</Text>
+              {!webRTCAvailable && (
+                <Text style={styles.placeholderSubtext}>WebRTC not available</Text>
+              )}
+            </View>
+          )}
           
-          <View style={styles.localVideoPlaceholder}>
-            <Text style={styles.placeholderText}>Your Video</Text>
-          </View>
+          {webRTCAvailable && localStream ? (
+            <View style={styles.localVideoContainer}>
+              <RTCView
+                streamURL={localStream.toURL()}
+                style={styles.localVideo}
+                objectFit="cover"
+                mirror={true}
+              />
+              <Text style={styles.videoLabel}>You</Text>
+            </View>
+          ) : (
+            <View style={styles.localVideoPlaceholder}>
+              <Text style={styles.placeholderText}>Your Video</Text>
+            </View>
+          )}
         </View>
 
-        {/* Chat Interface */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.chatContainer}
@@ -223,13 +392,6 @@ export default function VideoChat() {
           </View>
         </KeyboardAvoidingView>
       </View>
-
-      {/* Connection status */}
-      {!isConnected && !spinnerVisible && (
-        <View style={styles.connectionStatus}>
-          <Text style={styles.connectionText}>Not connected to server</Text>
-        </View>
-      )}
     </SafeAreaView>
   );
 }
@@ -298,14 +460,33 @@ const styles = StyleSheet.create({
   videosContainer: {
     flex: 1,
     position: 'relative',
-    padding: 10,
+  },
+  remoteVideoContainer: {
+    flex: 1,
+    backgroundColor: '#1F2937',
+  },
+  remoteVideo: {
+    flex: 1,
   },
   videoPlaceholder: {
     flex: 1,
     backgroundColor: '#1F2937',
-    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  localVideoContainer: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 120,
+    height: 160,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#1F2937',
+    elevation: 5,
+  },
+  localVideo: {
+    flex: 1,
   },
   localVideoPlaceholder: {
     position: 'absolute',
@@ -318,6 +499,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
+  },
+  videoLabel: {
+    position: 'absolute',
+    top: 5,
+    left: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    color: '#FFFFFF',
+    fontSize: 12,
   },
   placeholderText: {
     color: '#FFFFFF',
@@ -382,19 +574,5 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: '#FFFFFF',
     fontWeight: 'bold',
-  },
-  connectionStatus: {
-    position: 'absolute',
-    bottom: 50,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  connectionText: {
-    color: '#EF4444',
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
   },
 });

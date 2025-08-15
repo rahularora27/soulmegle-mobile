@@ -19,7 +19,7 @@ import * as Speech from 'expo-speech';
 
 import Constants from 'expo-constants';
 
-const SERVER_URL = '';
+const SERVER_URL = 'https://soulmegle-dvtt.onrender.com';
 
 export default function Lobby() {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -73,14 +73,6 @@ export default function Lobby() {
     });
   };
 
-  const speakWelcome = () => {
-    Speech.speak('Welcome to SoulMegle. Talk to strangers and make new connections!', {
-      language: 'en',
-      pitch: 1,
-      rate: 0.9,
-    });
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView 
@@ -98,7 +90,6 @@ export default function Lobby() {
                 source={require('../assets/icon.png')} 
                 style={styles.logo} 
               />
-              <Text style={styles.logoText}>SoulMegle</Text>
             </View>
             <View style={styles.onlineContainer}>
               <View style={styles.onlineIndicator} />
@@ -130,12 +121,6 @@ export default function Lobby() {
               </Text>
             </View>
 
-            {/* Voice Feature Info */}
-            <Pressable style={styles.voiceButton} onPress={speakWelcome}>
-              <Text style={styles.voiceIcon}>🎤</Text>
-              <Text style={styles.voiceText}>Tap to hear welcome message</Text>
-            </Pressable>
-
             {/* Connect Button */}
             <Pressable
               style={[styles.connectButton, isConnecting && styles.connectButtonDisabled]}
@@ -148,22 +133,6 @@ export default function Lobby() {
                 <Text style={styles.connectButtonText}>Connect Now</Text>
               )}
             </Pressable>
-
-            {/* Features */}
-            <View style={styles.features}>
-              <View style={styles.feature}>
-                <Text style={styles.featureIcon}>💬</Text>
-                <Text style={styles.featureText}>Text Chat</Text>
-              </View>
-              <View style={styles.feature}>
-                <Text style={styles.featureIcon}>📹</Text>
-                <Text style={styles.featureText}>Video Call</Text>
-              </View>
-              <View style={styles.feature}>
-                <Text style={styles.featureIcon}>🌍</Text>
-                <Text style={styles.featureText}>Global</Text>
-              </View>
-            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -297,21 +266,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  features: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  feature: {
-    alignItems: 'center',
-  },
-  featureIcon: {
-    fontSize: 30,
-    marginBottom: 5,
-  },
-  featureText: {
-    color: '#9CA3AF',
-    fontSize: 12,
   },
 });
