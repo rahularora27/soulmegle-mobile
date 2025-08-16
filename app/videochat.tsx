@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import {
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { io, Socket } from 'socket.io-client';
@@ -43,7 +45,6 @@ interface Message {
 export default function VideoChat() {
   const params = useLocalSearchParams();
   const serverUrl = (params.serverUrl as string) || 'http://192.168.0.194:8000';
-  
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [spinnerVisible, setSpinnerVisible] = useState(true);
@@ -80,7 +81,6 @@ export default function VideoChat() {
 
   const initializeConnection = () => {
     console.log('Connecting to:', serverUrl);
-    
     socketRef.current = io(serverUrl, {
       transports: ['websocket'],
     });
@@ -88,7 +88,6 @@ export default function VideoChat() {
     socketRef.current.on('connect', () => {
       console.log('Connected to server');
       setIsConnected(true);
-      
       socketRef.current?.emit('start', (person: string) => {
         typeRef.current = person;
         console.log('Type:', person);
@@ -110,7 +109,6 @@ export default function VideoChat() {
       console.log('Connected to stranger:', id);
       remoteSocketRef.current = id;
       setSpinnerVisible(false);
-      
       if (webRTCAvailable) {
         setupPeerConnection();
         startMediaStream();
@@ -139,22 +137,38 @@ export default function VideoChat() {
     peerRef.current = new RTCPeerConnection(configuration);
 
     peerRef.current.onicecandidate = (event: any) => {
+      console.log('ICE candidate:', event.candidate);
       if (event.candidate && socketRef.current) {
         socketRef.current.emit('ice:send', { candidate: event.candidate });
       }
     };
 
-    peerRef.current.onaddstream = (event: any) => {
-      if (event.stream) {
-        setRemoteStream(event.stream);
+    // Use ontrack instead of deprecated onaddstream
+    peerRef.current.ontrack = (event: any) => {
+      console.log('Received remote track:', event);
+      console.log('Remote streams:', event.streams);
+      if (event.streams && event.streams[0]) {
+        console.log('Setting remote stream');
+        setRemoteStream(event.streams[0]);
       }
+    };
+
+    // Add connection state monitoring
+    peerRef.current.onconnectionstatechange = () => {
+      console.log('Connection state:', peerRef.current.connectionState);
+    };
+
+    peerRef.current.oniceconnectionstatechange = () => {
+      console.log('ICE connection state:', peerRef.current.iceConnectionState);
     };
 
     peerRef.current.onnegotiationneeded = async () => {
       if (typeRef.current === 'p1') {
         try {
+          console.log('Creating offer...');
           const offer = await peerRef.current!.createOffer();
           await peerRef.current!.setLocalDescription(offer);
+          console.log('Sending offer:', peerRef.current!.localDescription);
           socketRef.current?.emit('sdp:send', {
             sdp: peerRef.current!.localDescription,
           });
@@ -179,12 +193,14 @@ export default function VideoChat() {
         },
       });
 
+      console.log('Local stream obtained:', stream);
+      console.log('Local stream tracks:', stream.getTracks());
       setLocalStream(stream);
 
       if (peerRef.current) {
-        stream.getTracks().forEach((track: any) => {
-          peerRef.current!.addTrack(track, stream);
-        });
+        // Use addStream for better compatibility
+        peerRef.current.addStream(stream);
+        console.log('Added local stream to peer connection');
       }
     } catch (error) {
       console.error('Error accessing media devices:', error);
@@ -196,10 +212,15 @@ export default function VideoChat() {
     if (!webRTCAvailable || !peerRef.current) return;
 
     try {
+      console.log('Received SDP:', sdp);
       await peerRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+      console.log('Set remote description successfully');
+      
       if (typeRef.current === 'p2') {
+        console.log('Creating answer...');
         const answer = await peerRef.current.createAnswer();
         await peerRef.current.setLocalDescription(answer);
+        console.log('Sending answer:', peerRef.current.localDescription);
         socketRef.current?.emit('sdp:send', {
           sdp: peerRef.current.localDescription,
         });
@@ -214,7 +235,9 @@ export default function VideoChat() {
 
     try {
       if (candidate) {
+        console.log('Adding ICE candidate:', candidate);
         await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log('ICE candidate added successfully');
       }
     } catch (error) {
       console.error('Error adding ICE candidate:', error);
@@ -323,7 +346,7 @@ export default function VideoChat() {
           {webRTCAvailable && remoteStream ? (
             <View style={styles.remoteVideoContainer}>
               <RTCView
-                streamURL={remoteStream.toURL()}
+                streamURL={remoteStream.toURL ? remoteStream.toURL() : remoteStream}
                 style={styles.remoteVideo}
                 objectFit="cover"
               />
@@ -337,11 +360,11 @@ export default function VideoChat() {
               )}
             </View>
           )}
-          
+
           {webRTCAvailable && localStream ? (
             <View style={styles.localVideoContainer}>
               <RTCView
-                streamURL={localStream.toURL()}
+                streamURL={localStream.toURL ? localStream.toURL() : localStream}
                 style={styles.localVideo}
                 objectFit="cover"
                 mirror={true}
@@ -376,7 +399,6 @@ export default function VideoChat() {
               </View>
             ))}
           </ScrollView>
-          
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
